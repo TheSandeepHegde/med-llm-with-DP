@@ -34,6 +34,8 @@ from torch.distributed import init_process_group, destroy_process_group
 
 from model import GPTConfig, GPT
 import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')  # Set the backend to Agg for non-interactive plotting
 
 # -----------------------------------------------------------------------------
 # default config values designed to train a gpt2 (124M) on OpenWebText
@@ -188,6 +190,8 @@ if master_process:
     times = []
     mfus = []
     epochs = []
+    last_time = time.time()
+
 torch.manual_seed(1337 + seed_offset)
 torch.backends.cuda.matmul.allow_tf32 = True # allow tf32 on matmul
 torch.backends.cudnn.allow_tf32 = True # allow tf32 on cudnn
@@ -335,6 +339,58 @@ if wandb_log and master_process:
     import wandb
     wandb.init(project=wandb_project, name=wandb_run_name, config=config)
 
+# Initialize tracking metrics after the wandb initialization
+if master_process:
+    train_losses = []
+    val_losses = []
+    times = []
+    mfus = []
+    epochs = []
+    last_time = time.time()
+
+def create_training_plots(out_dir, epochs, train_losses, val_losses, times, mfus):
+    """Helper function to create and save training metric plots"""
+    # Clear any existing plots
+    plt.clf()
+    
+    fig = plt.figure(figsize=(15, 5))
+    
+    # Loss plot
+    ax1 = fig.add_subplot(131)
+    ax1.plot(epochs, train_losses, label='Train Loss')
+    ax1.plot(epochs, val_losses, label='Val Loss')
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Loss')
+    ax1.set_title('Loss vs Epoch (with DP)')
+    ax1.legend()
+    
+    # Time plot
+    ax2 = fig.add_subplot(132)
+    ax2.plot(epochs, times)
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('Time (seconds)')
+    ax2.set_title('Time per Iteration vs Epoch (with DP)')
+    
+    # MFU plot
+    ax3 = fig.add_subplot(133)
+    ax3.plot(epochs, mfus)
+    ax3.set_xlabel('Epoch')
+    ax3.set_ylabel('MFU (%)')
+    ax3.set_title('Model Flops Utilization vs Epoch (with DP)')
+    
+    plt.tight_layout()
+    
+    # Save the plot
+    plot_path = os.path.join(out_dir, 'training_metrics_dp.png')
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    
+    # Print confirmation
+    if os.path.exists(plot_path):
+        print(f"Training plots saved to {plot_path}")
+    else:
+        print("Warning: Failed to save training plots")
+
 # training loop
 X, Y = get_batch('train') # fetch the very first batch
 t0 = time.time()
@@ -353,42 +409,20 @@ while True:
         losses = estimate_loss()
         print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
         
+        # Calculate time since last eval
+        current_time = time.time()
+        eval_dt = current_time - last_time
+        last_time = current_time
+        
         # Store metrics for plotting
         train_losses.append(losses['train'])
         val_losses.append(losses['val'])
-        times.append(dt)
+        times.append(eval_dt)
         mfus.append(running_mfu*100)
         epochs.append(iter_num / eval_interval)
         
         # Create and save plots
-        plt.figure(figsize=(15, 5))
-        
-        # Loss plot
-        plt.subplot(1, 3, 1)
-        plt.plot(epochs, train_losses, label='Train Loss')
-        plt.plot(epochs, val_losses, label='Val Loss')
-        plt.xlabel('Epoch')
-        plt.ylabel('Loss')
-        plt.title('Loss vs Epoch')
-        plt.legend()
-        
-        # Time plot
-        plt.subplot(1, 3, 2)
-        plt.plot(epochs, times)
-        plt.xlabel('Epoch')
-        plt.ylabel('Time (seconds)')
-        plt.title('Time per Iteration vs Epoch')
-        
-        # MFU plot
-        plt.subplot(1, 3, 3)
-        plt.plot(epochs, mfus)
-        plt.xlabel('Epoch')
-        plt.ylabel('MFU (%)')
-        plt.title('Model Flops Utilization vs Epoch')
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(out_dir, 'training_metrics_dp.png'))  # Changed filename to distinguish from non-DP training
-        plt.close()
+        create_training_plots(out_dir, epochs, train_losses, val_losses, times, mfus)
 
         if wandb_log:
             wandb.log({
@@ -397,6 +431,7 @@ while True:
                 "val/loss": losses['val'],
                 "lr": lr,
                 "mfu": running_mfu*100,
+                "epsilon": privacy_engine.get_epsilon(1e-5)  # Add privacy budget tracking
             })
         if losses['val'] < best_val_loss or always_save_checkpoint:
             best_val_loss = losses['val']
