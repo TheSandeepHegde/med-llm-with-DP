@@ -247,13 +247,45 @@ if wandb_log and master_process:
     import wandb
     wandb.init(project=wandb_project, name=wandb_run_name, config=config)
 
-# Tracking metrics for plotting
+# Initialize tracking metrics at the start of the script, after the wandb initialization
 if master_process:
     train_losses = []
     val_losses = []
     times = []
     mfus = []
     epochs = []
+    last_time = time.time()
+
+def create_training_plots(out_dir, epochs, train_losses, val_losses, times, mfus):
+    """Helper function to create and save training metric plots"""
+    plt.figure(figsize=(15, 5))
+    
+    # Loss plot
+    plt.subplot(1, 3, 1)
+    plt.plot(epochs, train_losses, label='Train Loss')
+    plt.plot(epochs, val_losses, label='Val Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Loss vs Epoch')
+    plt.legend()
+    
+    # Time plot
+    plt.subplot(1, 3, 2)
+    plt.plot(epochs, times)
+    plt.xlabel('Epoch')
+    plt.ylabel('Time (seconds)')
+    plt.title('Time per Iteration vs Epoch')
+    
+    # MFU plot
+    plt.subplot(1, 3, 3)
+    plt.plot(epochs, mfus)
+    plt.xlabel('Epoch')
+    plt.ylabel('MFU (%)')
+    plt.title('Model Flops Utilization vs Epoch')
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, 'training_metrics.png'))
+    plt.close()
 
 # training loop
 X, Y = get_batch('train') # fetch the very first batch
@@ -273,42 +305,20 @@ while True:
         losses = estimate_loss()
         print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
         
+        # Calculate time since last eval
+        current_time = time.time()
+        eval_dt = current_time - last_time
+        last_time = current_time
+        
         # Store metrics for plotting
         train_losses.append(losses['train'])
         val_losses.append(losses['val'])
-        times.append(dt)
+        times.append(eval_dt)
         mfus.append(running_mfu*100)
         epochs.append(iter_num / eval_interval)
         
         # Create and save plots
-        plt.figure(figsize=(15, 5))
-        
-        # Loss plot
-        plt.subplot(1, 3, 1)
-        plt.plot(epochs, train_losses, label='Train Loss')
-        plt.plot(epochs, val_losses, label='Val Loss')
-        plt.xlabel('Epoch')
-        plt.ylabel('Loss')
-        plt.title('Loss vs Epoch')
-        plt.legend()
-        
-        # Time plot
-        plt.subplot(1, 3, 2)
-        plt.plot(epochs, times)
-        plt.xlabel('Epoch')
-        plt.ylabel('Time (seconds)')
-        plt.title('Time per Iteration vs Epoch')
-        
-        # MFU plot
-        plt.subplot(1, 3, 3)
-        plt.plot(epochs, mfus)
-        plt.xlabel('Epoch')
-        plt.ylabel('MFU (%)')
-        plt.title('Model Flops Utilization vs Epoch')
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(out_dir, 'training_metrics.png'))
-        plt.close()
+        create_training_plots(out_dir, epochs, train_losses, val_losses, times, mfus)
 
         if wandb_log:
             wandb.log({
@@ -371,45 +381,6 @@ while True:
         if local_iter_num >= 5: # let the training loop settle a bit
             mfu = raw_model.estimate_mfu(batch_size * gradient_accumulation_steps, dt)
             running_mfu = mfu if running_mfu == -1.0 else 0.9*running_mfu + 0.1*mfu
-        
-        # Store metrics and create plots here where dt is available
-        if iter_num % eval_interval == 0:
-            train_losses.append(losses['train'])
-            val_losses.append(losses['val'])
-            times.append(dt)
-            mfus.append(running_mfu*100)
-            epochs.append(iter_num / eval_interval)
-            
-            # Create and save plots
-            plt.figure(figsize=(15, 5))
-            
-            # Loss plot
-            plt.subplot(1, 3, 1)
-            plt.plot(epochs, train_losses, label='Train Loss')
-            plt.plot(epochs, val_losses, label='Val Loss')
-            plt.xlabel('Epoch')
-            plt.ylabel('Loss')
-            plt.title('Loss vs Epoch')
-            plt.legend()
-            
-            # Time plot
-            plt.subplot(1, 3, 2)
-            plt.plot(epochs, times)
-            plt.xlabel('Epoch')
-            plt.ylabel('Time (seconds)')
-            plt.title('Time per Iteration vs Epoch')
-            
-            # MFU plot
-            plt.subplot(1, 3, 3)
-            plt.plot(epochs, mfus)
-            plt.xlabel('Epoch')
-            plt.ylabel('MFU (%)')
-            plt.title('Model Flops Utilization vs Epoch')
-            
-            plt.tight_layout()
-            plt.savefig(os.path.join(out_dir, 'training_metrics.png'))
-            plt.close()
-        
         print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%")
     iter_num += 1
     local_iter_num += 1
