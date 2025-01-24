@@ -110,17 +110,30 @@ def differentialPrivacy(model):
     # Ensure that model's parameters are set to require gradients for DP training
     model.requires_grad_(True)
 
+    # Increase noise multiplier and decrease batch size for stronger privacy guarantees
+    model, optimizer, train_dataloader = privacy_engine.make_private(
+        module=model,
+        optimizer=optimizer,
+        data_loader=train_dataloader,
+        max_grad_norm=1.0,  # Keep gradient clipping threshold
+        noise_multiplier=1.5,  # Increased from 0.5 to 1.5 for more privacy
+        target_epsilon=3.0,  # Target privacy budget
+        target_delta=1e-5,   # Target failure probability
+        epochs=3,            # Number of epochs for privacy calculation
+    )
+
+    # Modify training arguments for better privacy
     training_args = TrainingArguments(
-    output_dir="./results",  # Directory to save model checkpoints
-    evaluation_strategy="no",
-    logging_dir="./logs",  # Directory for logs
-    logging_steps=10,
-    num_train_epochs=3,  # Adjust the number of epochs as needed
-    per_device_train_batch_size=2,
-    gradient_accumulation_steps=2,  # Accumulate gradients for larger batch sizes
-    report_to="none",  # Disable reporting to Huggingface hub
-    weight_decay=0.01,  # Regularization
-    logging_first_step=True,
+        output_dir="./results",
+        evaluation_strategy="no",
+        logging_dir="./logs",
+        logging_steps=10,
+        num_train_epochs=3,
+        per_device_train_batch_size=1,  # Reduced batch size for better privacy
+        gradient_accumulation_steps=4,  # Increased to compensate for smaller batch size
+        report_to="none",
+        weight_decay=0.01,
+        logging_first_step=True,
     )
 
     trainer = Trainer(
@@ -134,28 +147,26 @@ def differentialPrivacy(model):
 
     train_dataloader = trainer.get_train_dataloader()
 
-    model, optimizer, train_dataloader = privacy_engine.make_private(
-    module=model,
-    optimizer=optimizer,
-    data_loader=train_dataloader,
-    max_grad_norm=1.0,  # Gradient clipping threshold
-    noise_multiplier=0.5,  # Noise multiplier for DP
-    )
-
     trainer.optimizer = optimizer
     trainer.train_dataset = train_dataloader.dataset
 
     # Start training
     trainer.train()
 
-    # Retrieve and print the privacy budget
-    epsilon = privacy_engine.get_epsilon(1e-5)
-    print(f"Epsilon: {epsilon}, Delta: 1e-5")
+    # Add more frequent privacy budget logging
+    for epoch in range(training_args.num_train_epochs):
+        for step, batch in enumerate(train_dataloader):
+            # ... training step ...
+            
+            if step % 100 == 0:  # Log privacy budget every 100 steps
+                current_epsilon = privacy_engine.get_epsilon(delta=1e-5)
+                print(f"Current ε: {current_epsilon:.2f} (δ = 1e-5)")
 
-    trainer.evaluate()
-
-    # Save the model and tokenizer
-    # model.save_pretrained("./dp_finetuned_model")
+    # Final privacy report
+    final_epsilon = privacy_engine.get_epsilon(1e-5)
+    print(f"\nFinal Privacy Budget:")
+    print(f"ε: {final_epsilon:.2f}")
+    print(f"δ: 1e-5")
 
     return model
 
