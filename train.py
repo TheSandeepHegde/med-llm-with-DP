@@ -366,11 +366,50 @@ while True:
     t0 = t1
     if iter_num % log_interval == 0 and master_process:
         # get loss as float. note: this is a CPU-GPU sync point
-        # scale up to undo the division above, approximating the true total loss (exact would have been a sum)
+        # scale up to undo the division above, approximating the true total loss
         lossf = loss.item() * gradient_accumulation_steps
         if local_iter_num >= 5: # let the training loop settle a bit
             mfu = raw_model.estimate_mfu(batch_size * gradient_accumulation_steps, dt)
             running_mfu = mfu if running_mfu == -1.0 else 0.9*running_mfu + 0.1*mfu
+        
+        # Store metrics and create plots here where dt is available
+        if iter_num % eval_interval == 0:
+            train_losses.append(losses['train'])
+            val_losses.append(losses['val'])
+            times.append(dt)
+            mfus.append(running_mfu*100)
+            epochs.append(iter_num / eval_interval)
+            
+            # Create and save plots
+            plt.figure(figsize=(15, 5))
+            
+            # Loss plot
+            plt.subplot(1, 3, 1)
+            plt.plot(epochs, train_losses, label='Train Loss')
+            plt.plot(epochs, val_losses, label='Val Loss')
+            plt.xlabel('Epoch')
+            plt.ylabel('Loss')
+            plt.title('Loss vs Epoch')
+            plt.legend()
+            
+            # Time plot
+            plt.subplot(1, 3, 2)
+            plt.plot(epochs, times)
+            plt.xlabel('Epoch')
+            plt.ylabel('Time (seconds)')
+            plt.title('Time per Iteration vs Epoch')
+            
+            # MFU plot
+            plt.subplot(1, 3, 3)
+            plt.plot(epochs, mfus)
+            plt.xlabel('Epoch')
+            plt.ylabel('MFU (%)')
+            plt.title('Model Flops Utilization vs Epoch')
+            
+            plt.tight_layout()
+            plt.savefig(os.path.join(out_dir, 'training_metrics.png'))
+            plt.close()
+        
         print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%")
     iter_num += 1
     local_iter_num += 1
