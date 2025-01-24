@@ -33,6 +33,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 
 from model import GPTConfig, GPT
+import matplotlib.pyplot as plt
 
 # -----------------------------------------------------------------------------
 # default config values designed to train a gpt2 (124M) on OpenWebText
@@ -181,6 +182,12 @@ print(f"tokens per iteration will be: {tokens_per_iter:,}")
 
 if master_process:
     os.makedirs(out_dir, exist_ok=True)
+    # Tracking metrics for plotting
+    train_losses = []
+    val_losses = []
+    times = []
+    mfus = []
+    epochs = []
 torch.manual_seed(1337 + seed_offset)
 torch.backends.cuda.matmul.allow_tf32 = True # allow tf32 on matmul
 torch.backends.cudnn.allow_tf32 = True # allow tf32 on cudnn
@@ -345,13 +352,51 @@ while True:
     if iter_num % eval_interval == 0 and master_process:
         losses = estimate_loss()
         print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        
+        # Store metrics for plotting
+        train_losses.append(losses['train'])
+        val_losses.append(losses['val'])
+        times.append(dt)
+        mfus.append(running_mfu*100)
+        epochs.append(iter_num / eval_interval)
+        
+        # Create and save plots
+        plt.figure(figsize=(15, 5))
+        
+        # Loss plot
+        plt.subplot(1, 3, 1)
+        plt.plot(epochs, train_losses, label='Train Loss')
+        plt.plot(epochs, val_losses, label='Val Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.title('Loss vs Epoch')
+        plt.legend()
+        
+        # Time plot
+        plt.subplot(1, 3, 2)
+        plt.plot(epochs, times)
+        plt.xlabel('Epoch')
+        plt.ylabel('Time (seconds)')
+        plt.title('Time per Iteration vs Epoch')
+        
+        # MFU plot
+        plt.subplot(1, 3, 3)
+        plt.plot(epochs, mfus)
+        plt.xlabel('Epoch')
+        plt.ylabel('MFU (%)')
+        plt.title('Model Flops Utilization vs Epoch')
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(out_dir, 'training_metrics_dp.png'))  # Changed filename to distinguish from non-DP training
+        plt.close()
+
         if wandb_log:
             wandb.log({
                 "iter": iter_num,
                 "train/loss": losses['train'],
                 "val/loss": losses['val'],
                 "lr": lr,
-                "mfu": running_mfu*100, # convert to percentage
+                "mfu": running_mfu*100,
             })
         if losses['val'] < best_val_loss or always_save_checkpoint:
             best_val_loss = losses['val']
