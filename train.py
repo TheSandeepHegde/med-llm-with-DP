@@ -26,6 +26,7 @@ import numpy as np
 import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
+import matplotlib.pyplot as plt
 
 from model import GPTConfig, GPT
 
@@ -246,6 +247,14 @@ if wandb_log and master_process:
     import wandb
     wandb.init(project=wandb_project, name=wandb_run_name, config=config)
 
+# Tracking metrics for plotting
+if master_process:
+    train_losses = []
+    val_losses = []
+    times = []
+    mfus = []
+    epochs = []
+
 # training loop
 X, Y = get_batch('train') # fetch the very first batch
 t0 = time.time()
@@ -263,6 +272,44 @@ while True:
     if iter_num % eval_interval == 0 and master_process:
         losses = estimate_loss()
         print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        
+        # Store metrics for plotting
+        train_losses.append(losses['train'])
+        val_losses.append(losses['val'])
+        times.append(dt)
+        mfus.append(running_mfu*100)
+        epochs.append(iter_num / eval_interval)
+        
+        # Create and save plots
+        plt.figure(figsize=(15, 5))
+        
+        # Loss plot
+        plt.subplot(1, 3, 1)
+        plt.plot(epochs, train_losses, label='Train Loss')
+        plt.plot(epochs, val_losses, label='Val Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.title('Loss vs Epoch')
+        plt.legend()
+        
+        # Time plot
+        plt.subplot(1, 3, 2)
+        plt.plot(epochs, times)
+        plt.xlabel('Epoch')
+        plt.ylabel('Time (seconds)')
+        plt.title('Time per Iteration vs Epoch')
+        
+        # MFU plot
+        plt.subplot(1, 3, 3)
+        plt.plot(epochs, mfus)
+        plt.xlabel('Epoch')
+        plt.ylabel('MFU (%)')
+        plt.title('Model Flops Utilization vs Epoch')
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(out_dir, 'training_metrics.png'))
+        plt.close()
+
         if wandb_log:
             wandb.log({
                 "iter": iter_num,
