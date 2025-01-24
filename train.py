@@ -26,6 +26,8 @@ import numpy as np
 import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
+import matplotlib
+matplotlib.use('Agg')  # Set the backend to Agg for non-interactive plotting
 import matplotlib.pyplot as plt
 
 from model import GPTConfig, GPT
@@ -258,34 +260,46 @@ if master_process:
 
 def create_training_plots(out_dir, epochs, train_losses, val_losses, times, mfus):
     """Helper function to create and save training metric plots"""
-    plt.figure(figsize=(15, 5))
+    # Clear any existing plots
+    plt.clf()
+    
+    fig = plt.figure(figsize=(15, 5))
     
     # Loss plot
-    plt.subplot(1, 3, 1)
-    plt.plot(epochs, train_losses, label='Train Loss')
-    plt.plot(epochs, val_losses, label='Val Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title('Loss vs Epoch')
-    plt.legend()
+    ax1 = fig.add_subplot(131)
+    ax1.plot(epochs, train_losses, label='Train Loss')
+    ax1.plot(epochs, val_losses, label='Val Loss')
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Loss')
+    ax1.set_title('Loss vs Epoch')
+    ax1.legend()
     
     # Time plot
-    plt.subplot(1, 3, 2)
-    plt.plot(epochs, times)
-    plt.xlabel('Epoch')
-    plt.ylabel('Time (seconds)')
-    plt.title('Time per Iteration vs Epoch')
+    ax2 = fig.add_subplot(132)
+    ax2.plot(epochs, times)
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('Time (seconds)')
+    ax2.set_title('Time per Iteration vs Epoch')
     
     # MFU plot
-    plt.subplot(1, 3, 3)
-    plt.plot(epochs, mfus)
-    plt.xlabel('Epoch')
-    plt.ylabel('MFU (%)')
-    plt.title('Model Flops Utilization vs Epoch')
+    ax3 = fig.add_subplot(133)
+    ax3.plot(epochs, mfus)
+    ax3.set_xlabel('Epoch')
+    ax3.set_ylabel('MFU (%)')
+    ax3.set_title('Model Flops Utilization vs Epoch')
     
     plt.tight_layout()
-    plt.savefig(os.path.join(out_dir, 'training_metrics.png'))
-    plt.close()
+    
+    # Save the plot
+    plot_path = os.path.join(out_dir, 'training_metrics.png')
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    
+    # Print confirmation
+    if os.path.exists(plot_path):
+        print(f"Training plots saved to {plot_path}")
+    else:
+        print("Warning: Failed to save training plots")
 
 # training loop
 X, Y = get_batch('train') # fetch the very first batch
